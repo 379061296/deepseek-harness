@@ -29,6 +29,7 @@ concurrency:
 
 env:
   PACKAGE_WORKFLOW: windows-package-cloud.yml
+  PACKAGE_WORKFLOW_NAME: 'Windows installer (unsigned, cloud)'
   # Safety valve, not a routine limit: stop starting builds once this many have
   # been started in the last 30 days, so a burst of releases cannot exhaust the
   # account's Actions minutes and starve everything else.
@@ -100,14 +101,17 @@ jobs:
             exit 0
           fi
           since=$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)
-          if recent=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$PACKAGE_WORKFLOW" \
-            --limit 100 --json createdAt \
-            --jq "[.[] | select(.createdAt >= \"$since\")] | length"); then
-            echo "packaging runs started in the last 30 days: $recent"
-          else
-            echo 'warning: could not count recent packaging runs; proceeding'
-            recent=0
-          fi
+          # Count by workflow name rather than by file name: the run list reports
+          # the name, and an unusable count must never stop packaging. This is the
+          # one branch a version-less sync cannot exercise, so it fails safe.
+          recent=$(gh run list --repo "$GITHUB_REPOSITORY" --limit 200 \
+            --json workflowName,createdAt \
+            --jq "[.[] | select(.workflowName == \"$PACKAGE_WORKFLOW_NAME\" and .createdAt >= \"$since\")] | length" \
+            2>/dev/null) || recent=0
+          case "$recent" in
+            '' | *[!0-9]*) echo "warning: unusable run count '$recent'; proceeding"; recent=0 ;;
+          esac
+          echo "packaging runs started in the last 30 days: $recent"
           if [ "$recent" -ge "$MAX_BUILDS_PER_MONTH" ]; then
             echo "monthly packaging allowance of $MAX_BUILDS_PER_MONTH runs is used up; skipping $after_version"
             exit 0
