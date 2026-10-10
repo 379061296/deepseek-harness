@@ -1,24 +1,38 @@
-# Keep this mirror in step with deepseek-ai/deepseek-harness.
+# Keep this mirror in step with deepseek-ai/deepseek-harness, and package each
+# newly published version of it.
 #
 # `git push --mirror` cannot be used here: master carries local changes upstream
 # does not have, and --mirror would drop them. Merging keeps them, because
 # upstream never touches those paths, so the merge normally cannot conflict.
 #
-# The push uses the default GITHUB_TOKEN, so a sync never triggers other workflows.
+# The push uses the default GITHUB_TOKEN. GitHub does not start workflow runs
+# from that token's pushes, so this workflow starts the packaging run itself
+# when the version changes.
 name: Sync upstream
 
 on:
   schedule:
-    # UTC. Off the top of the hour.
-    - cron: '41 * * * *'
+    # UTC, off the top of the hour. Every three hours rather than hourly: the
+    # packaging run costs about an hour of wall clock anyway, so a shorter sync
+    # interval barely shortens the time to a downloadable installer while it
+    # spends minutes the packaging runs need.
+    - cron: '41 */3 * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: upstream-sync
   cancel-in-progress: false
+
+env:
+  PACKAGE_WORKFLOW: windows-package-cloud.yml
+  # Safety valve, not a routine limit: stop starting builds once this many have
+  # been started in the last 30 days, so a burst of releases cannot exhaust the
+  # account's Actions minutes and starve everything else.
+  MAX_BUILDS_PER_MONTH: '12'
 
 jobs:
   sync:
@@ -31,11 +45,13 @@ jobs:
           fetch-depth: 0
 
       - name: Merge upstream
+        id: merge
         run: |
           set -euo pipefail
           git config user.name 'upstream sync'
           git config user.email 'upstream-sync@users.noreply.github.com'
-          echo "mirror before: $(git rev-parse HEAD)"
+          before=$(git rev-parse HEAD)
+          echo "mirror before: $before"
           git remote add upstream https://github.com/deepseek-ai/deepseek-harness.git
           git fetch --force --tags upstream 'refs/heads/*:refs/remotes/upstream/*'
           echo "upstream master: $(git rev-parse upstream/master)"
@@ -55,13 +71,49 @@ jobs:
             git rm -f .github/dependabot.yml
             git commit --no-edit
           fi
-          echo "mirror after: $(git rev-parse HEAD)"
+          after=$(git rev-parse HEAD)
+          echo "mirror after: $after"
+          echo "before=$before" >> "$GITHUB_OUTPUT"
+          echo "after=$after" >> "$GITHUB_OUTPUT"
 
       - name: Push branch and tags
         run: |
           set -euo pipefail
           git push origin HEAD:master
           git push --force origin --tags
+
+      - name: Package a newly published version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ steps.merge.outputs.before }}
+          AFTER: ${{ steps.merge.outputs.after }}
+        run: |
+          set -euo pipefail
+          version_of() {
+            git show "$1:package.json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])'
+          }
+          before_version=$(version_of "$BEFORE")
+          after_version=$(version_of "$AFTER")
+          echo "version: $before_version -> $after_version"
+          if [ "$before_version" = "$after_version" ]; then
+            echo 'no version change; nothing to package'
+            exit 0
+          fi
+          since=$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          if recent=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$PACKAGE_WORKFLOW" \
+            --limit 100 --json createdAt \
+            --jq "[.[] | select(.createdAt >= \"$since\")] | length"); then
+            echo "packaging runs started in the last 30 days: $recent"
+          else
+            echo 'warning: could not count recent packaging runs; proceeding'
+            recent=0
+          fi
+          if [ "$recent" -ge "$MAX_BUILDS_PER_MONTH" ]; then
+            echo "monthly packaging allowance of $MAX_BUILDS_PER_MONTH runs is used up; skipping $after_version"
+            exit 0
+          fi
+          gh workflow run "$PACKAGE_WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref master
+          echo "requested a packaging run for version $after_version"
 
       - name: Report
         if: always()
