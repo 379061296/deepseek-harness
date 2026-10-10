@@ -68,9 +68,20 @@ jobs:
             echo 'the packaging run produced no installer artifact'
             exit 1
           fi
+          # Publish the installer under the name its published version carries,
+          # without the unsigned marker, so it downloads as
+          # deepseek-harness-<version>-win-x64.exe.
+          dir=$(dirname "$exe")
+          name=$(basename "$exe")
+          clean=$(printf '%s' "$name" | sed 's/-unsigned\.exe$/.exe/')
+          if [ "$clean" != "$name" ]; then
+            mv -- "$exe" "$dir/$clean"
+            exe="$dir/$clean"
+          fi
+          echo "installer to publish: $(basename "$exe")"
           run_id='${{ steps.src.outputs.run_id }}'
           sha=$(gh run view "$run_id" --repo '${{ github.repository }}' --json headSha --jq .headSha)
-          tag="desktop-win-x64-unsigned-$run_id"
+          tag="desktop-win-x64-$run_id"
           gh release create "$tag" "$exe" \
             --repo '${{ github.repository }}' \
             --target "$sha" \
