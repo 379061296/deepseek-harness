@@ -1,5 +1,10 @@
-# Keep this mirror in step with deepseek-ai/deepseek-harness, and package each
-# newly published version of it.
+# Keep this mirror in step with the versions deepseek-ai/deepseek-harness
+# publishes, and package each newly published version.
+#
+# This mirror follows release tags, not upstream's master: it moves only when
+# upstream cuts a new dsh-v* tag, and then it takes every release it has not
+# taken yet in a single step. Between releases the mirror does not move, so it
+# never carries work upstream has not published.
 #
 # `git push --mirror` cannot be used here: master carries local changes upstream
 # does not have, and --mirror would drop them. Merging keeps them, because
@@ -12,10 +17,10 @@ name: Sync upstream
 
 on:
   schedule:
-    # UTC, off the top of the hour. Every three hours rather than hourly: the
-    # packaging run costs about an hour of wall clock anyway, so a shorter sync
-    # interval barely shortens the time to a downloadable installer while it
-    # spends minutes the packaging runs need.
+    # UTC, off the top of the hour. Every three hours is enough: a release is
+    # picked up within three hours and the packaging run then takes about half
+    # an hour, so a shorter interval buys little while it spends minutes the
+    # packaging runs need.
     - cron: '41 */3 * * *'
   workflow_dispatch:
 
@@ -28,6 +33,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  RELEASE_TAG_PATTERN: 'dsh-v*'
   PACKAGE_WORKFLOW: windows-package-cloud.yml
   PACKAGE_WORKFLOW_NAME: 'Windows installer (unsigned, cloud)'
   # Safety valve, not a routine limit: stop starting builds once this many have
@@ -45,7 +51,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Merge upstream
+      - name: Take the newest published version
         id: merge
         run: |
           set -euo pipefail
@@ -55,27 +61,38 @@ jobs:
           echo "mirror before: $before"
           git remote add upstream https://github.com/deepseek-ai/deepseek-harness.git
           git fetch --force --tags upstream 'refs/heads/*:refs/remotes/upstream/*'
-          echo "upstream master: $(git rev-parse upstream/master)"
-          git merge --no-edit upstream/master || true
-          # This mirror drops the Dependabot configuration on purpose: dependency
-          # update pull requests are noise here and their runs consume Actions
-          # minutes. If upstream edits that file the merge stops with a
-          # modify/delete conflict, so restate the deletion and finish the merge.
-          git rm -f --ignore-unmatch .github/dependabot.yml
-          git add -A
-          if [ -f .git/MERGE_HEAD ]; then
-            conflicted=$(git diff --name-only --diff-filter=U)
-            if [ "$conflicted" != ".github/dependabot.yml" ]; then
-              echo "unexpected merge conflict in: $conflicted"
-              exit 1
-            fi
-            git rm -f .github/dependabot.yml
-            git commit --no-edit
+          release_tag=$(git tag -l "$RELEASE_TAG_PATTERN" --sort=-v:refname | head -n1)
+          if [ -z "$release_tag" ]; then
+            echo "no tag matches $RELEASE_TAG_PATTERN"
+            exit 1
           fi
-          after=$(git rev-parse HEAD)
-          echo "mirror after: $after"
+          echo "newest published version: $release_tag"
+          if git merge-base --is-ancestor "$release_tag" "$before"; then
+            echo "already carries $release_tag; the mirror stays put"
+            after=$before
+          else
+            git merge --no-edit "$release_tag" || true
+            # This mirror drops the Dependabot configuration on purpose: dependency
+            # update pull requests are noise here and their runs consume Actions
+            # minutes. If upstream edits that file the merge stops with a
+            # modify/delete conflict, so restate the deletion and finish the merge.
+            git rm -f --ignore-unmatch .github/dependabot.yml
+            git add -A
+            if [ -f .git/MERGE_HEAD ]; then
+              conflicted=$(git diff --name-only --diff-filter=U)
+              if [ "$conflicted" != ".github/dependabot.yml" ]; then
+                echo "unexpected merge conflict in: $conflicted"
+                exit 1
+              fi
+              git rm -f .github/dependabot.yml
+              git commit --no-edit
+            fi
+            after=$(git rev-parse HEAD)
+            echo "mirror after: $after"
+          fi
           echo "before=$before" >> "$GITHUB_OUTPUT"
           echo "after=$after" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
 
       - name: Push branch and tags
         run: |
@@ -100,10 +117,10 @@ jobs:
             echo 'no version change; nothing to package'
             exit 0
           fi
-          since=$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)
           # Count by workflow name rather than by file name: the run list reports
           # the name, and an unusable count must never stop packaging. This is the
           # one branch a version-less sync cannot exercise, so it fails safe.
+          since=$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)
           recent=$(gh run list --repo "$GITHUB_REPOSITORY" --limit 200 \
             --json workflowName,createdAt \
             --jq "[.[] | select(.workflowName == \"$PACKAGE_WORKFLOW_NAME\" and .createdAt >= \"$since\")] | length" \
@@ -125,6 +142,7 @@ jobs:
           {
             echo "### Upstream sync"
             echo ""
+            echo "- newest published version: \`${{ steps.merge.outputs.release_tag }}\`"
             echo "- mirror master: \`$(git rev-parse HEAD 2>/dev/null || echo unknown)\`"
             echo "- upstream master: \`$(git rev-parse upstream/master 2>/dev/null || echo unknown)\`"
           } >> "$GITHUB_STEP_SUMMARY"
