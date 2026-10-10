@@ -17,11 +17,10 @@ name: Sync upstream
 
 on:
   schedule:
-    # UTC, off the top of the hour. Hourly keeps the wait for a freshly
-    # published version under an hour; three-hourly would save about 480 minutes
-    # a month but leave a new release waiting up to three times as long. The
-    # packaging run then takes about half an hour on its own.
-    - cron: '41 * * * *'
+    # UTC, on the hour. GitHub delays scheduled runs under high load and names
+    # the start of every hour as a high-load time, so this run can start late,
+    # or under heavy load be dropped and picked up by the next hour's run.
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 permissions:
