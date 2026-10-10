@@ -1,17 +1,16 @@
 # Keep this mirror in step with deepseek-ai/deepseek-harness.
 #
-# `git push --mirror` cannot be used here: master carries the hosted-runner
-# packaging workflow (.github/workflows/windows-package-cloud.yml) that upstream
-# does not have, and --mirror would drop it. Merging keeps that commit, because
-# upstream never touches that path, so the merge never conflicts.
+# `git push --mirror` cannot be used here: master carries local changes upstream
+# does not have, and --mirror would drop them. Merging keeps them, because
+# upstream never touches those paths, so the merge normally cannot conflict.
 #
 # The push uses the default GITHUB_TOKEN, so a sync never triggers other workflows.
 name: Sync upstream
 
 on:
   schedule:
-    # UTC. Twice a day, off the top of the hour.
-    - cron: '41 2,14 * * *'
+    # UTC. Off the top of the hour.
+    - cron: '41 */2 * * *'
   workflow_dispatch:
 
 permissions:
@@ -40,7 +39,22 @@ jobs:
           git remote add upstream https://github.com/deepseek-ai/deepseek-harness.git
           git fetch --force --tags upstream 'refs/heads/*:refs/remotes/upstream/*'
           echo "upstream master: $(git rev-parse upstream/master)"
-          git merge --no-edit upstream/master
+          git merge --no-edit upstream/master || true
+          # This mirror drops the Dependabot configuration on purpose: dependency
+          # update pull requests are noise here and their runs consume Actions
+          # minutes. If upstream edits that file the merge stops with a
+          # modify/delete conflict, so restate the deletion and finish the merge.
+          git rm -f --ignore-unmatch .github/dependabot.yml
+          git add -A
+          if [ -f .git/MERGE_HEAD ]; then
+            conflicted=$(git diff --name-only --diff-filter=U)
+            if [ "$conflicted" != ".github/dependabot.yml" ]; then
+              echo "unexpected merge conflict in: $conflicted"
+              exit 1
+            fi
+            git rm -f .github/dependabot.yml
+            git commit --no-edit
+          fi
           echo "mirror after: $(git rev-parse HEAD)"
 
       - name: Push branch and tags
