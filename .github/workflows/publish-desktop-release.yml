@@ -82,13 +82,14 @@ jobs:
           run_id='${{ steps.src.outputs.run_id }}'
           sha=$(gh run view "$run_id" --repo '${{ github.repository }}' --json headSha --jq .headSha)
           tag="desktop-win-x64-$run_id"
+          notes=$(printf '%s\n' \
+            "来自打包运行 ${run_id} 的 Windows x64 安装包。" \
+            "" \
+            "来源：deepseek-ai/deepseek-harness 的镜像，对应提交 ${sha}。" \
+            "架构：x64。本流水线不产出 macOS 版本。")
           gh release create "$tag" "$exe" \
             --repo '${{ github.repository }}' \
             --target "$sha" \
-            --title "DeepSeek Harness desktop — Windows x64 unsigned (build $run_id)" \
-            --notes "Unsigned Windows x64 installer from packaging run $run_id.
-
-          Source: a mirror of deepseek-ai/deepseek-harness at commit $sha.
-          This build is not code-signed, so Windows SmartScreen warns on first launch.
-          Architecture: x64. macOS builds are not produced by this pipeline."
+            --title "DeepSeek Harness 桌面端 Windows x64 构建 ${run_id}" \
+            --notes "$notes"
           gh release view "$tag" --repo '${{ github.repository }}' --json url --jq .url
