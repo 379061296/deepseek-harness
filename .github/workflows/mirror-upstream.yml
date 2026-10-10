@@ -10,7 +10,7 @@ name: Sync upstream
 on:
   schedule:
     # UTC. Off the top of the hour.
-    - cron: '41 */2 * * *'
+    - cron: '41 * * * *'
   workflow_dispatch:
 
 permissions:
