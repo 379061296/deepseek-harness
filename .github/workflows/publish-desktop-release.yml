@@ -90,6 +90,6 @@ jobs:
           gh release create "$tag" "$exe" \
             --repo '${{ github.repository }}' \
             --target "$sha" \
-            --title "DeepSeek Harness 桌面端 Windows x64 构建 ${run_id}" \
+            --title "DeepSeek Harness desktop — Windows x64" \
             --notes "$notes"
           gh release view "$tag" --repo '${{ github.repository }}' --json url --jq .url
