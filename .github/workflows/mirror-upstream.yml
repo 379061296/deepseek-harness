@@ -17,11 +17,11 @@ name: Sync upstream
 
 on:
   schedule:
-    # UTC, off the top of the hour. Every three hours is enough: a release is
-    # picked up within three hours and the packaging run then takes about half
-    # an hour, so a shorter interval buys little while it spends minutes the
-    # packaging runs need.
-    - cron: '41 */3 * * *'
+    # UTC, off the top of the hour. Hourly keeps the wait for a freshly
+    # published version under an hour; three-hourly would save about 480 minutes
+    # a month but leave a new release waiting up to three times as long. The
+    # packaging run then takes about half an hour on its own.
+    - cron: '41 * * * *'
   workflow_dispatch:
 
 permissions:
