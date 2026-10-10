@@ -60,7 +60,12 @@ jobs:
           echo "mirror before: $before"
           git remote add upstream https://github.com/deepseek-ai/deepseek-harness.git
           git fetch --force --tags upstream 'refs/heads/*:refs/remotes/upstream/*'
-          release_tag=$(git tag -l "$RELEASE_TAG_PATTERN" --sort=-v:refname | head -n1)
+          # Plain version sort ranks a prerelease above its own release, so
+          # "0.2.1-rc.1" would outrank "0.2.1" and hide a finished release behind
+          # its candidates. Declaring the separator as a prerelease suffix
+          # restores semantic ordering, which must be set here rather than read
+          # from a config file: the runner has none.
+          release_tag=$(git -c versionsort.suffix=- tag -l "$RELEASE_TAG_PATTERN" --sort=-v:refname | head -n1)
           if [ -z "$release_tag" ]; then
             echo "no tag matches $RELEASE_TAG_PATTERN"
             exit 1
