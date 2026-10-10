@@ -1,0 +1,83 @@
+# Publish a finished desktop build so it can be downloaded without digging
+# through Actions artifacts, which expire after 14 days.
+#
+# This listens for the cloud packaging workflow instead of adding a step to it,
+# so the packaging workflow keeps the shape of its upstream original and a
+# publish failure cannot mark a finished build as failed.
+name: Publish desktop installer
+
+on:
+  workflow_run:
+    workflows: ['Windows installer (unsigned, cloud)']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Packaging run id to publish; leave empty to use the triggering run'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: publish-desktop-installer
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Resolve the packaging run
+        id: src
+        env:
+          DISPATCH_RUN_ID: ${{ inputs.run_id }}
+          TRIGGER_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          run_id="${DISPATCH_RUN_ID:-$TRIGGER_RUN_ID}"
+          if [ -z "$run_id" ]; then
+            echo 'no packaging run id to publish'
+            exit 1
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "publishing run $run_id"
+
+      - name: Download the installer artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download '${{ steps.src.outputs.run_id }}' \
+            --repo '${{ github.repository }}' \
+            --pattern 'cloud-win-x64-unsigned-*' \
+            --dir dist
+          find dist -type f -name '*.exe' -print
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          exe=$(find dist -type f -name '*.exe' | head -n1)
+          if [ -z "$exe" ]; then
+            echo 'the packaging run produced no installer artifact'
+            exit 1
+          fi
+          run_id='${{ steps.src.outputs.run_id }}'
+          sha=$(gh run view "$run_id" --repo '${{ github.repository }}' --json headSha --jq .headSha)
+          tag="desktop-win-x64-unsigned-$run_id"
+          gh release create "$tag" "$exe" \
+            --repo '${{ github.repository }}' \
+            --target "$sha" \
+            --title "DeepSeek Harness desktop — Windows x64 unsigned (build $run_id)" \
+            --notes "Unsigned Windows x64 installer from packaging run $run_id.
+
+          Source: a mirror of deepseek-ai/deepseek-harness at commit $sha.
+          This build is not code-signed, so Windows SmartScreen warns on first launch.
+          Architecture: x64. macOS builds are not produced by this pipeline."
+          gh release view "$tag" --repo '${{ github.repository }}' --json url --jq .url
