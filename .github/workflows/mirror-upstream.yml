@@ -1,0 +1,60 @@
+# Keep this mirror in step with deepseek-ai/deepseek-harness.
+#
+# `git push --mirror` cannot be used here: master carries the hosted-runner
+# packaging workflow (.github/workflows/windows-package-cloud.yml) that upstream
+# does not have, and --mirror would drop it. Merging keeps that commit, because
+# upstream never touches that path, so the merge never conflicts.
+#
+# The push uses the default GITHUB_TOKEN, so a sync never triggers other workflows.
+name: Sync upstream
+
+on:
+  schedule:
+    # UTC. Twice a day, off the top of the hour.
+    - cron: '41 2,14 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out this mirror with full history
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Merge upstream
+        run: |
+          set -euo pipefail
+          git config user.name 'upstream sync'
+          git config user.email 'upstream-sync@users.noreply.github.com'
+          echo "mirror before: $(git rev-parse HEAD)"
+          git remote add upstream https://github.com/deepseek-ai/deepseek-harness.git
+          git fetch --force --tags upstream 'refs/heads/*:refs/remotes/upstream/*'
+          echo "upstream master: $(git rev-parse upstream/master)"
+          git merge --no-edit upstream/master
+          echo "mirror after: $(git rev-parse HEAD)"
+
+      - name: Push branch and tags
+        run: |
+          set -euo pipefail
+          git push origin HEAD:master
+          git push --force origin --tags
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "### Upstream sync"
+            echo ""
+            echo "- mirror master: \`$(git rev-parse HEAD 2>/dev/null || echo unknown)\`"
+            echo "- upstream master: \`$(git rev-parse upstream/master 2>/dev/null || echo unknown)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
