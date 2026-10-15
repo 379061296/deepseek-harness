@@ -1,7 +1,14 @@
 # Cloud copy of .github/workflows/windows-package.yml. It differs in the runner
-# label and the input defaults: the upstream workflow targets the self-hosted
-# label dsh-win-package-trial, which no hosted runner can match, and the inputs
-# carry defaults so it can be dispatched as is.
+# label, the input defaults, and how the public package settings are supplied:
+# the upstream workflow targets the self-hosted label dsh-win-package-trial and
+# takes the machine preset configured there, while this copy runs on a hosted
+# runner and writes apps/desktop/.env.windows itself.
+#
+# The settings file is written here because the Desktop CI adapter now refuses to
+# run without DSH_PACKAGING_PRESET, which selects presets/<preset>.env under an
+# absolute machine configuration directory owned by the packaging machine. The
+# documented public settings file reaches the same packaging command without a
+# machine preset, which is what keeps this copy runnable on a hosted runner.
 #
 # The build version defaults to the version the checkout publishes, so the
 # installer is named deepseek-harness-<version>-win-x64-unsigned.exe. Upstream's
@@ -78,14 +85,42 @@ jobs:
           }
           Write-Host "build version: $requested"
           "version=$requested" >> $env:GITHUB_OUTPUT
-      - name: Validate inputs and prepare public package settings
+      - name: Write public package settings
         id: settings
         env:
-          PACKAGE_BUILD_VERSION: ${{ steps.build_version.outputs.version }}
+          PACKAGE_VERSION: ${{ steps.build_version.outputs.version }}
           PACKAGE_DEPLOYMENT: ${{ inputs.deployment }}
           PACKAGE_POLICY_ORIGIN: ${{ inputs.policy_origin }}
           PACKAGE_LOGIN_ORIGINS: ${{ inputs.login_origins }}
-        run: node apps/desktop/scripts/prepare-windows-ci.mjs
+        run: |
+          $deployment = $env:PACKAGE_DEPLOYMENT
+          if ($deployment -ne 'test' -and $deployment -ne 'production') {
+            throw 'deployment must be test or production'
+          }
+          $origins = @($env:PACKAGE_LOGIN_ORIGINS -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+          if ($deployment -eq 'test' -and $origins.Count -eq 0) {
+            throw 'the test deployment requires at least one login origin'
+          }
+          if ($deployment -eq 'production' -and $origins.Count -gt 0) {
+            throw 'the production deployment must not supply login origins'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:PACKAGE_POLICY_ORIGIN)) {
+            throw 'a policy origin is required'
+          }
+          $originKey = if ($deployment -eq 'test') {
+            'DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN'
+          } else {
+            'DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN'
+          }
+          $config = if ($deployment -eq 'test') { @{ allowedAuthOrigins = $origins } } else { @{} }
+          @(
+            'DSH_DESKTOP_APP_ID=com.deepseek.harness'
+            "DSH_DESKTOP_AUTO_UPDATE_ENV=$deployment"
+            "$originKey=$($env:PACKAGE_POLICY_ORIGIN)"
+            "DSH_DESKTOP_MANDATORY_UPDATE_CONFIG=$($config | ConvertTo-Json -Compress)"
+          ) | Set-Content -LiteralPath apps/desktop/.env.windows -Encoding utf8NoBOM
+          Get-Content -LiteralPath apps/desktop/.env.windows
+          "version=$($env:PACKAGE_VERSION)" >> $env:GITHUB_OUTPUT
       - name: Check packaging configuration and toolchain
         env:
           PACKAGE_VERSION: ${{ steps.settings.outputs.version }}
