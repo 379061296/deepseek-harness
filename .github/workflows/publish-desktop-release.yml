@@ -86,7 +86,7 @@ jobs:
             "来自打包运行 ${run_id} 的 Windows x64 安装包。" \
             "" \
             "来源：deepseek-ai/deepseek-harness 的镜像，对应提交 ${sha}。" \
-            "架构：x64。本流水线不产出 macOS 版本。")
+            "架构：x64。")
           gh release create "$tag" "$exe" \
             --repo '${{ github.repository }}' \
             --target "$sha" \
