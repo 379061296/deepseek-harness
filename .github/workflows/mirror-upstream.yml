@@ -10,9 +10,15 @@
 # does not have, and --mirror would drop them. Merging keeps them, because
 # upstream never touches those paths, so the merge normally cannot conflict.
 #
-# The push uses the default GITHUB_TOKEN. GitHub does not start workflow runs
-# from that token's pushes, so this workflow starts the packaging run itself
-# when the version changes.
+# The push uses the SYNC_TOKEN secret, not the default GITHUB_TOKEN. Because
+# this merge carries upstream's .github/workflows/ changes, the default token
+# cannot do it: GitHub refuses to let GITHUB_TOKEN create or update workflow
+# files, and `workflows` is not among the scopes it can be granted. The secret
+# must hold a token with `Contents: write` and `Workflows: write`.
+#
+# A token like that, unlike GITHUB_TOKEN, can start workflow runs from its own
+# pushes. Nothing in this repository listens for pushes, so nothing does; this
+# workflow still starts the packaging run itself when the version changes.
 name: Sync upstream
 
 on:
