@@ -1,6 +1,11 @@
 # Publish a finished desktop build so it can be downloaded without digging
 # through Actions artifacts, which expire after 14 days.
 #
+# The release is named after the version the installer was built from, not after
+# the run that built it: that is what a reader looks for, and it keeps one
+# release per version and platform. A second build of a version already
+# published replaces that release's installer.
+#
 # This listens for the cloud packaging workflow instead of adding a step to it,
 # so the packaging workflow keeps the shape of its upstream original and a
 # publish failure cannot mark a finished build as failed.
@@ -78,18 +83,44 @@ jobs:
             mv -- "$exe" "$dir/$clean"
             exe="$dir/$clean"
           fi
-          echo "installer to publish: $(basename "$exe")"
+          name=$(basename "$exe")
+          # The version has to come from the installer: this job never checks the
+          # product out, and the run id it is handed says nothing about which
+          # version that run built.
+          version=$(printf '%s' "$name" | sed -n 's/^deepseek-harness-\(.*\)-win-x64\.exe$/\1/p')
+          if [ -z "$version" ]; then
+            echo "no version in '$name'; expected deepseek-harness-<version>-win-x64.exe"
+            exit 1
+          fi
+          echo "installer to publish: $name (version $version)"
           run_id='${{ steps.src.outputs.run_id }}'
           sha=$(gh run view "$run_id" --repo '${{ github.repository }}' --json headSha --jq .headSha)
-          tag="desktop-win-x64-$run_id"
+          tag="desktop-win-x64-$version"
+          # Upstream publishes alpha and rc versions as prereleases; mark ours the
+          # same way, so a finished stable version keeps the 'Latest' mark.
+          prerelease=
+          case "$version" in
+            *-*) prerelease='--prerelease' ;;
+          esac
           notes=$(printf '%s\n' \
-            "来自打包运行 ${run_id} 的 Windows x64 安装包。" \
+            "来自打包运行 ${run_id} 的 Windows x64 安装包，版本 ${version}。" \
             "" \
             "来源：deepseek-ai/deepseek-harness 的镜像，对应提交 ${sha}。" \
             "架构：x64。")
-          gh release create "$tag" "$exe" \
-            --repo '${{ github.repository }}' \
-            --target "$sha" \
-            --title "DeepSeek Harness Desktop" \
-            --notes "$notes"
+          if gh release view "$tag" --repo '${{ github.repository }}' >/dev/null 2>&1; then
+            # The tag already names this version, so a rebuild of it lands here.
+            # Replace the installer; the tag stays on the commit of the first
+            # build of this version.
+            echo "release $tag exists; replacing its installer"
+            gh release upload "$tag" "$exe" --repo '${{ github.repository }}' --clobber
+            gh release edit "$tag" --repo '${{ github.repository }}' \
+              --title "DeepSeek Harness $version（Windows x64）" \
+              --notes "$notes" $prerelease
+          else
+            gh release create "$tag" "$exe" \
+              --repo '${{ github.repository }}' \
+              --target "$sha" \
+              --title "DeepSeek Harness $version（Windows x64）" \
+              --notes "$notes" $prerelease
+          fi
           gh release view "$tag" --repo '${{ github.repository }}' --json url --jq .url
