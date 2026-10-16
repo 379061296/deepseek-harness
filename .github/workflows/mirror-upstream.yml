@@ -16,9 +16,14 @@
 # files, and `workflows` is not among the scopes it can be granted. The secret
 # must hold a token with `Contents: write` and `Workflows: write`.
 #
-# A token like that, unlike GITHUB_TOKEN, can start workflow runs from its own
-# pushes. Nothing in this repository listens for pushes, so nothing does; this
-# workflow still starts the packaging run itself when the version changes.
+# A token like that, unlike GITHUB_TOKEN, can start workflow runs at all: events
+# raised by GITHUB_TOKEN start nothing, and a run GITHUB_TOKEN created raises no
+# `workflow_run` event when it finishes. Nothing in this repository listens for
+# pushes, so nothing does; this workflow starts the packaging run itself when the
+# version changes, and it must raise that run with SYNC_TOKEN, or
+# 'Publish desktop installer' never hears the packaging finished and no release
+# is published. That token therefore needs Actions: write alongside the
+# Contents: write and Workflows: write it already carries.
 name: Sync upstream
 
 on:
@@ -112,8 +117,11 @@ jobs:
           git push --force origin --tags
 
       - name: Package a newly published version
+        # SYNC_TOKEN, not github.token: see the note at the top of the file. The
+        # packaging run has to be raised by a token whose runs raise events, or
+        # the publish workflow never starts.
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
           BEFORE: ${{ steps.merge.outputs.before }}
           AFTER: ${{ steps.merge.outputs.after }}
         run: |
