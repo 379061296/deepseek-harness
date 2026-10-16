@@ -95,7 +95,7 @@ jobs:
           echo "installer to publish: $name (version $version)"
           run_id='${{ steps.src.outputs.run_id }}'
           sha=$(gh run view "$run_id" --repo '${{ github.repository }}' --json headSha --jq .headSha)
-          tag="desktop-win-x64-$version"
+          tag="deepseek-harness-$version-win-x64"
           # Upstream publishes alpha and rc versions as prereleases; mark ours the
           # same way, so a finished stable version keeps the 'Latest' mark.
           prerelease=
